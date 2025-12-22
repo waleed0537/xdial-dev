@@ -1547,15 +1547,15 @@ const MedicareDashboard = () => {
                           height: "16px",
                         }}
                       />
-                      <span
-                        style={{
-                          fontSize: "14px",
-                          fontWeight: 500,
-                          color: "#333",
-                        }}
-                      >
-                        All Calls
-                      </span>
+                        <span
+                          style={{
+                            fontSize: "14px",
+                            fontWeight: 500,
+                            color: "#333",
+                          }}
+                        >
+                          All Calls
+                        </span>
                     </div>
                     <div
                       style={{

@@ -300,11 +300,16 @@ const ClientRecordings = () => {
               <i className="bi bi-mic-fill"></i> Recordings
             </button>
 
-            <button className="btn btn-outline"
-              onClick={() => window.location.href = `/data-export?campaign_id=${campaignId}`}
-            >
-              <i className="bi bi-download"></i> Data Export
-            </button>
+            <button
+  className="btn btn-outline"
+  onClick={() => {
+    sessionStorage.setItem("from_recordings", "true");
+    window.location.href = `/data-export?campaign_id=${campaignId}`;
+  }}
+>
+  <i className="bi bi-download"></i> Data Export
+</button>
+
             
             <button     
               className="btn btn-outline"

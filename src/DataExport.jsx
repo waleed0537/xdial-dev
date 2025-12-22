@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from "react";
-
+import ClientHeader from "./ClientHeader";
 export default function DataExport() {
   const [campaignId, setCampaignId] = useState(null); // You can make this dynamic
   const [exportOptions, setExportOptions] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+const [clientName, setClientName] = useState("");
+const [showClientHeader, setShowClientHeader] = useState(false);
 
   // Filter states
   const [exportType, setExportType] = useState("all");
@@ -27,6 +29,15 @@ export default function DataExport() {
       window.location.href = "/client-landing";
     }
   }, []);
+  useEffect(() => {
+  const fromRecordings = sessionStorage.getItem("from_recordings");
+
+  if (fromRecordings === "true") {
+    setShowClientHeader(true);
+    sessionStorage.removeItem("from_recordings"); // prevent reuse
+  }
+}, []);
+
 
   // Fetch export options on mount
   useEffect(() => {
@@ -80,6 +91,30 @@ export default function DataExport() {
       setLoading(false);
     }
   };
+const fetchClientName = async () => {
+  const token = localStorage.getItem("access_token") || sessionStorage.getItem("access_token");
+  if (!token || !campaignId) return;
+
+  const today = new Date().toISOString().split("T")[0];
+  const res = await fetch(
+    `https://api.xlitecore.xdialnetworks.com/api/v1/campaigns/${campaignId}/dashboard?start_date=${today}&page=1&page_size=1`,
+    {
+      headers: {
+        accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  if (res.ok) {
+    const data = await res.json();
+    setClientName(data.client_name || "Client");
+  }
+};
+
+useEffect(() => {
+  if (campaignId) fetchClientName();
+}, [campaignId]);
 
  const handleExport = async () => {
   try {
@@ -364,8 +399,15 @@ export default function DataExport() {
           .grid-cols-4 { grid-template-columns: 1fr; }
         }
       `}</style>
+{showClientHeader && (
+  <ClientHeader
+    clientName={clientName}
+    campaignId={campaignId}
+    activePage="data-export"
+  />
+)}
 
-     
+
 
       {/* Main Content */}
       <main className="main-content">
