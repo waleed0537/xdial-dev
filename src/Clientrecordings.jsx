@@ -676,7 +676,9 @@ const styles = `
     padding: 0;
     box-sizing: border-box;
   }
-
+    body{
+    zoom: 0.9;
+    }
   .card {
     background: white;
     border-radius: 0.75rem;

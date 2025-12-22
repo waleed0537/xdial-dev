@@ -323,6 +323,7 @@ useEffect(() => {
     >
       <style>{`
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        body{zoom: 0.9;}
         .header { background-color: white; border-bottom: 1px solid #e5e7eb; padding: 1rem 1.5rem; }
         .header-content { display: flex; align-items: center; justify-content: space-between; max-width: 1280px; margin: 0 auto; }
         .header-left { display: flex; align-items: center; gap: 0.75rem; }

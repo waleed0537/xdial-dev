@@ -229,6 +229,7 @@ const MedicareDashboard = () => {
         "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
       backgroundColor: "#f5f5f5",
       color: "#333",
+      zoom: "0.9"
     },
     header: {
       backgroundColor: "#fff",
