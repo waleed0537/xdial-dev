@@ -117,7 +117,9 @@ const MedicareDashboard = () => {
   };
 
   // Fetch dashboard data from API
-  // ClientDashboard.jsx - Update fetchData useEffect
+  // ClientDashboard.jsx - Update fetchData useEffect to fetch all pages
+  // Fetch dashboard data from API
+  // ClientDashboard.jsx - Update fetchData useEffect to fetch all pages
   useEffect(() => {
     const fetchData = async () => {
       if (!campaignId) return;
@@ -133,8 +135,9 @@ const MedicareDashboard = () => {
           throw new Error("No authentication token found. Please login again.");
         }
 
-        const res = await fetch(
-          `https://api.xlitecore.xdialnetworks.com/api/v1/campaigns/${campaignId}/dashboard?start_date=${startDate}&page=${currentPage}&page_size=25`,
+        // First, fetch the first page to get total pages info
+        const firstPageRes = await fetch(
+          `https://api.xlitecore.xdialnetworks.com/api/v1/campaigns/${campaignId}/dashboard?start_date=${startDate}&page=1&page_size=25`,
           {
             headers: {
               accept: "application/json",
@@ -143,13 +146,59 @@ const MedicareDashboard = () => {
           }
         );
 
-        if (res.status === 401) {
+        if (firstPageRes.status === 401) {
           throw new Error("Session expired. Please login again.");
         }
 
-        if (!res.ok) throw new Error("Failed to fetch dashboard data");
-        const data = await res.json();
-        setDashboardData(data);
+        if (!firstPageRes.ok) throw new Error("Failed to fetch dashboard data");
+
+        const firstPageData = await firstPageRes.json();
+        const totalPages = firstPageData.pagination?.total_pages || 1;
+
+        // If there's only one page, use it directly
+        if (totalPages === 1) {
+          setDashboardData(firstPageData);
+          setLoading(false);
+          return;
+        }
+
+        // Fetch all remaining pages in parallel
+        const pagePromises = [];
+        for (let page = 2; page <= totalPages; page++) {
+          pagePromises.push(
+            fetch(
+              `https://api.xlitecore.xdialnetworks.com/api/v1/campaigns/${campaignId}/dashboard?start_date=${startDate}&page=${page}&page_size=25`,
+              {
+                headers: {
+                  accept: "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+              }
+            ).then((res) => res.json())
+          );
+        }
+
+        const additionalPages = await Promise.all(pagePromises);
+
+        // Combine all calls from all pages
+        const allCalls = [
+          ...firstPageData.calls,
+          ...additionalPages.flatMap((pageData) => pageData.calls || []),
+        ];
+
+        // Create combined data object
+        const combinedData = {
+          ...firstPageData,
+          calls: allCalls,
+          pagination: {
+            ...firstPageData.pagination,
+            total_records: allCalls.length,
+            current_page: 1,
+            total_pages: 1, // We now have all data in one "page"
+          },
+        };
+
+        setDashboardData(combinedData);
         setLoading(false);
       } catch (err) {
         setError(err.message);
@@ -163,12 +212,9 @@ const MedicareDashboard = () => {
       }
     };
     fetchData();
-  }, [campaignId, startDate, currentPage]);
+  }, [campaignId, startDate]); // Only refetch when campaign or start date changes
 
   // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchText, listId, selectedOutcomes, startTime, endDate, endTime]);
 
   const summaryChartRef = useRef(null);
   const mainChartRef = useRef(null);
@@ -635,6 +681,28 @@ const MedicareDashboard = () => {
         : [...prev, catName]
     );
   };
+  // Add this after the filteredCallRecords logic (around line 620)
+  // Client-side pagination
+  const RECORDS_PER_PAGE = 25;
+  const totalFilteredRecords = filteredCallRecords.length;
+  const totalPages = Math.ceil(totalFilteredRecords / RECORDS_PER_PAGE);
+  const startIndex = (currentPage - 1) * RECORDS_PER_PAGE;
+  const endIndex = startIndex + RECORDS_PER_PAGE;
+  const paginatedRecords = filteredCallRecords.slice(startIndex, endIndex);
+  console.log("Debug Info:", {
+    totalCallRecords: callRecords.length,
+    totalFiltered: filteredCallRecords.length,
+    currentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    paginatedCount: paginatedRecords.length,
+  });
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(1);
+    }
+  }, [totalFilteredRecords, totalPages]);
 
   // Select All functionality - does nothing
   const handleSelectAll = () => {
@@ -890,19 +958,36 @@ const MedicareDashboard = () => {
   }, [showSummaryGraph, callRecords]);
 
   // Function to process statistics data based on filters
+  // Function to process statistics data based on filters
   const processStatisticsData = () => {
     if (!callRecords || callRecords.length === 0) {
       return { labels: [], datasets: [] };
     }
 
+    // Get all valid timestamps
+    const allTimestamps = callRecords
+      .map((r) => parseTimestamp(r.timestamp))
+      .filter((d) => d !== null);
+
+    if (allTimestamps.length === 0) {
+      return { labels: [], datasets: [] };
+    }
+
+    // Sort timestamps to find earliest and latest
+    allTimestamps.sort((a, b) => a - b);
+    const earliestDate = allTimestamps[0];
+    const latestDate = allTimestamps[allTimestamps.length - 1];
+
+    // Check if all data is within a single day
+    const earliestDateStr = formatDateForComparison(earliestDate);
+    const latestDateStr = formatDateForComparison(latestDate);
+    const isSingleDay = earliestDateStr === latestDateStr;
+
     // If no specific categories selected (All Calls), show all categories
     const categoriesToShow =
       selectedOutcomes.length === 0 ? ALLOWED_CATEGORIES : selectedOutcomes;
 
-    // Check if we're viewing a single day
-    const isSingleDay = !endDate || startDate === endDate;
-
-    // Filter records based on date range and selected categories
+    // Filter records based on selected categories only (not date, use all data)
     const filtered = callRecords.filter((record) => {
       // Check if category is selected (if All Calls, include all)
       if (
@@ -911,35 +996,6 @@ const MedicareDashboard = () => {
       ) {
         return false;
       }
-
-      // Check date range
-      if (record.timestamp) {
-        const recordDate = parseTimestamp(record.timestamp);
-        if (!recordDate) return false;
-
-        // Start date/time filter
-        if (startDate) {
-          const startDateTime = parseUserInputDate(startDate, startTime);
-          if (!startDateTime) return false;
-          if (recordDate < startDateTime) return false;
-        }
-
-        // End date/time filter
-        if (endDate) {
-          const endDateTime = parseUserInputDate(
-            endDate,
-            endTime || "23:59:59"
-          );
-          if (!endDateTime) return false;
-          if (recordDate > endDateTime) return false;
-        } else if (startDate && !endDate) {
-          // If only start date is set, filter for that day only
-          const endOfStartDay = parseUserInputDate(startDate, "23:59:59");
-          if (!endOfStartDay) return false;
-          if (recordDate > endOfStartDay) return false;
-        }
-      }
-
       return true;
     });
 
@@ -952,8 +1008,16 @@ const MedicareDashboard = () => {
       // Group by hour (0-23)
       const hourMap = new Map();
 
-      // Initialize all 24 hours
-      for (let hour = 0; hour < 24; hour++) {
+      // Get the start and end hours from actual data
+      const dataTimestamps = filtered
+        .map((r) => parseTimestamp(r.timestamp))
+        .filter((d) => d !== null);
+
+      const startHour = Math.min(...dataTimestamps.map((d) => d.getHours()));
+      const endHour = Math.max(...dataTimestamps.map((d) => d.getHours()));
+
+      // Initialize only the hours that have data or are in between
+      for (let hour = startHour; hour <= endHour; hour++) {
         hourMap.set(hour, {});
       }
 
@@ -962,33 +1026,36 @@ const MedicareDashboard = () => {
         if (!recordDate) return;
 
         const hour = recordDate.getHours();
-        const hourData = hourMap.get(hour);
+        if (!hourMap.has(hour)) return; // Skip if outside our range
 
+        const hourData = hourMap.get(hour);
         if (!hourData[record.category]) {
           hourData[record.category] = 0;
         }
         hourData[record.category]++;
       });
 
-      // Create labels for 24 hours
-      const labels = Array.from({ length: 24 }, (_, i) => {
-        const hour = i % 12 || 12;
-        const ampm = i < 12 ? "AM" : "PM";
-        return `${hour} ${ampm}`;
-      });
+      // Create labels for the actual hour range
+      const labels = [];
+      for (let hour = startHour; hour <= endHour; hour++) {
+        const displayHour = hour % 12 || 12;
+        const ampm = hour < 12 ? "AM" : "PM";
+        labels.push(`${displayHour} ${ampm}`);
+      }
 
       // Create datasets for each category to show
       const datasets = categoriesToShow.map((category) => {
-        const data = Array.from({ length: 24 }, (_, hour) => {
+        const data = [];
+        for (let hour = startHour; hour <= endHour; hour++) {
           const hourData = hourMap.get(hour);
-          return hourData[category] || 0;
-        });
+          data.push(hourData[category] || 0);
+        }
 
         // Find the outcome to get its color
         const outcome = outcomes.find((o) => o.label === category);
         const color = outcome ? outcome.color : "#1a73e8";
 
-        // Convert hex to rgba for background and border - make them lighter
+        // Convert hex to rgba for background and border
         const hexToRgba = (hex, alpha) => {
           const r = parseInt(hex.slice(1, 3), 16);
           const g = parseInt(hex.slice(3, 5), 16);
@@ -999,13 +1066,13 @@ const MedicareDashboard = () => {
         return {
           label: category,
           data: data,
-          borderColor: hexToRgba(color, 0.5), // Lighter border
-          backgroundColor: hexToRgba(color, 0.08), // Very light fill
+          borderColor: hexToRgba(color, 0.5),
+          backgroundColor: hexToRgba(color, 0.08),
           fill: true,
           tension: 0.4,
           pointRadius: 2,
           pointHoverRadius: 4,
-          borderWidth: 1, // Thinner border
+          borderWidth: 1,
         };
       });
 
@@ -1014,12 +1081,16 @@ const MedicareDashboard = () => {
       // Group records by date and category
       const dateMap = new Map();
 
+      // Get all unique dates from the data
+      const allDates = new Set();
       filtered.forEach((record) => {
         const recordDate = parseTimestamp(record.timestamp);
         if (!recordDate) return;
 
         const dateStr = formatDateForComparison(recordDate);
         if (!dateStr) return;
+
+        allDates.add(dateStr);
 
         if (!dateMap.has(dateStr)) {
           dateMap.set(dateStr, {});
@@ -1033,7 +1104,7 @@ const MedicareDashboard = () => {
       });
 
       // Sort dates
-      const sortedDates = Array.from(dateMap.keys()).sort();
+      const sortedDates = Array.from(allDates).sort();
 
       // Create labels from sorted dates
       const labels = sortedDates.map((dateStr) => {
@@ -1048,14 +1119,14 @@ const MedicareDashboard = () => {
       const datasets = categoriesToShow.map((category) => {
         const data = sortedDates.map((dateStr) => {
           const dateData = dateMap.get(dateStr);
-          return dateData[category] || 0;
+          return dateData && dateData[category] ? dateData[category] : 0;
         });
 
         // Find the outcome to get its color
         const outcome = outcomes.find((o) => o.label === category);
         const color = outcome ? outcome.color : "#1a73e8";
 
-        // Convert hex to rgba for background and border - make them lighter
+        // Convert hex to rgba for background and border
         const hexToRgba = (hex, alpha) => {
           const r = parseInt(hex.slice(1, 3), 16);
           const g = parseInt(hex.slice(3, 5), 16);
@@ -1066,13 +1137,13 @@ const MedicareDashboard = () => {
         return {
           label: category,
           data: data,
-          borderColor: hexToRgba(color, 0.5), // Lighter border
-          backgroundColor: hexToRgba(color, 0.08), // Very light fill
+          borderColor: hexToRgba(color, 0.5),
+          backgroundColor: hexToRgba(color, 0.08),
           fill: true,
           tension: 0.4,
           pointRadius: 2,
           pointHoverRadius: 4,
-          borderWidth: 1, // Thinner border
+          borderWidth: 1,
         };
       });
 
@@ -1167,31 +1238,34 @@ const MedicareDashboard = () => {
   }, [currentView]);
 
   // Update chart when filters change
-  useEffect(() => {
-    if (currentView === "statistics" && mainChartInstance.current) {
-      const chartData = processStatisticsData();
+  // Update chart when filters change
+useEffect(() => {
+  if (currentView === "statistics" && mainChartInstance.current) {
+    const chartData = processStatisticsData();
 
-      // Check if we're viewing a single day
-      const isSingleDay = !endDate || startDate === endDate;
-
-      // Update x-axis title based on view mode
-      mainChartInstance.current.options.scales.x.title.text = isSingleDay
-        ? "Time (Hour)"
-        : "Date";
-
-      mainChartInstance.current.data.labels = chartData.labels;
-      mainChartInstance.current.data.datasets = chartData.datasets;
-      mainChartInstance.current.update();
+    // Determine if single day based on actual data
+    const allTimestamps = callRecords
+      .map((r) => parseTimestamp(r.timestamp))
+      .filter((d) => d !== null);
+    
+    let isSingleDay = false;
+    if (allTimestamps.length > 0) {
+      allTimestamps.sort((a, b) => a - b);
+      const earliestDateStr = formatDateForComparison(allTimestamps[0]);
+      const latestDateStr = formatDateForComparison(allTimestamps[allTimestamps.length - 1]);
+      isSingleDay = earliestDateStr === latestDateStr;
     }
-  }, [
-    selectedOutcomes,
-    startDate,
-    startTime,
-    endDate,
-    endTime,
-    currentView,
-    callRecords,
-  ]);
+
+    // Update x-axis title based on view mode
+    mainChartInstance.current.options.scales.x.title.text = isSingleDay
+      ? "Time (Hour)"
+      : "Date";
+
+    mainChartInstance.current.data.labels = chartData.labels;
+    mainChartInstance.current.data.datasets = chartData.datasets;
+    mainChartInstance.current.update();
+  }
+}, [selectedOutcomes, currentView, callRecords]);
 
   useEffect(() => {
     if (dashboardData) {
@@ -1265,15 +1339,15 @@ const MedicareDashboard = () => {
           >
             <i className="bi bi-mic-fill"></i> Recordings
           </button>
-          <button 
-    style={{
-      ...styles.btn,
-      ...(currentView === "data-export" ? styles.btnPrimary : {}),
-    }}
-    onClick={() => setCurrentView("data-export")}
-  >
-    <i className="bi bi-download"></i> Data Export
-  </button>
+          <button
+            style={{
+              ...styles.btn,
+              ...(currentView === "data-export" ? styles.btnPrimary : {}),
+            }}
+            onClick={() => setCurrentView("data-export")}
+          >
+            <i className="bi bi-download"></i> Data Export
+          </button>
           <button
             style={styles.btn}
             onClick={() => {
@@ -1289,8 +1363,8 @@ const MedicareDashboard = () => {
           </button>
         </div>
       </div>
-
       <div style={styles.container}>
+        {/* Statistics View */}
         {/* Statistics View */}
         {currentView === "statistics" && (
           <>
@@ -1321,48 +1395,8 @@ const MedicareDashboard = () => {
                 />
               </div>
 
-              <div style={styles.datetimeRow}>
-                <div style={styles.inputGroup}>
-                  <label style={styles.inputLabel}>
-                    Start Date (US EST/EDT)
-                  </label>
-                  <input
-                    type="date"
-                    style={styles.input}
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
-                </div>
-                <div style={styles.inputGroup}>
-                  <label style={styles.inputLabel}>
-                    Start Time (US EST/EDT)
-                  </label>
-                  <input
-                    type="time"
-                    style={styles.input}
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                  />
-                </div>
-                <div style={styles.inputGroup}>
-                  <label style={styles.inputLabel}>End Date (US EST/EDT)</label>
-                  <input
-                    type="date"
-                    style={styles.input}
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                  />
-                </div>
-                <div style={styles.inputGroup}>
-                  <label style={styles.inputLabel}>End Time (US EST/EDT)</label>
-                  <input
-                    type="time"
-                    style={styles.input}
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                  />
-                </div>
-              </div>
+              {/* Auto-detected date range display */}
+            
 
               <button
                 onClick={handleReset}
@@ -1380,7 +1414,7 @@ const MedicareDashboard = () => {
                 }}
               >
                 <i className="bi bi-arrow-clockwise"></i>
-                Reset
+                Reset Filters
               </button>
             </div>
 
@@ -1407,9 +1441,23 @@ const MedicareDashboard = () => {
                     Calls Over Time
                   </div>
                   <div style={{ fontSize: "13px", color: "#777" }}>
-                    {!endDate || startDate === endDate
-                      ? "Hourly breakdown for the selected day"
-                      : "Daily breakdown by date range"}
+                    {(() => {
+                      const timestamps = callRecords
+                        .map((r) => parseTimestamp(r.timestamp))
+                        .filter((d) => d !== null);
+                      if (timestamps.length === 0) return "No data available";
+
+                      const dates = timestamps.map((d) =>
+                        formatDateForComparison(d)
+                      );
+                      const uniqueDates = [...new Set(dates)];
+
+                      if (uniqueDates.length === 1) {
+                        return "Hourly breakdown for the selected day";
+                      } else {
+                        return `Daily breakdown across ${uniqueDates.length} days`;
+                      }
+                    })()}
                   </div>
                 </div>
 
@@ -1458,35 +1506,7 @@ const MedicareDashboard = () => {
                 </div>
 
                 {/* Stats */}
-                <div style={{ textAlign: "center", marginBottom: "20px" }}>
-                  <div
-                    style={{
-                      fontSize: "48px",
-                      fontWeight: 700,
-                      color: "#1a73e8",
-                    }}
-                  >
-                    {qualifiedCount.toLocaleString()}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "14px",
-                      color: "#666",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    Total Qualified
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "16px",
-                      color: "#28a745",
-                      fontWeight: 600,
-                    }}
-                  >
-                    <i className="bi bi-arrow-up"></i> {qualifiedPercentage}%
-                  </div>
-                </div>
+               
 
                 {/* Chart */}
                 <div style={{ height: "400px", position: "relative" }}>
@@ -1547,15 +1567,15 @@ const MedicareDashboard = () => {
                           height: "16px",
                         }}
                       />
-                        <span
-                          style={{
-                            fontSize: "14px",
-                            fontWeight: 500,
-                            color: "#333",
-                          }}
-                        >
-                          All Calls
-                        </span>
+                      <span
+                        style={{
+                          fontSize: "14px",
+                          fontWeight: 500,
+                          color: "#333",
+                        }}
+                      >
+                        All Calls
+                      </span>
                     </div>
                     <div
                       style={{
@@ -2330,7 +2350,10 @@ const MedicareDashboard = () => {
                 <div style={styles.sectionTitle}>
                   <i className="bi bi-telephone-fill"></i>
                   <h2 style={{ fontSize: "16px", fontWeight: 600, margin: 0 }}>
-                    Call Records ({filteredCallRecords.length} total)
+                    Call Records ({totalFilteredRecords} filtered
+                    {totalFilteredRecords !== callRecords.length &&
+                      ` of ${callRecords.length} total`}
+                    )
                   </h2>
                 </div>
                 <p style={{ ...styles.timezoneNote, margin: 0 }}>
@@ -2512,7 +2535,7 @@ const MedicareDashboard = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredCallRecords.length === 0 ? (
+                    {paginatedRecords.length === 0 ? (
                       <tr>
                         <td
                           colSpan={6}
@@ -2526,7 +2549,7 @@ const MedicareDashboard = () => {
                         </td>
                       </tr>
                     ) : (
-                      filteredCallRecords.map((record) => {
+                      paginatedRecords.map((record) => {
                         const outcome = outcomes.find(
                           (o) => o.label === record.category
                         );
@@ -2663,9 +2686,15 @@ const MedicareDashboard = () => {
                 }}
               >
                 <div style={{ fontSize: "13px", color: "#666" }}>
-                  Showing page {currentPage} of{" "}
-                  {dashboardData?.pagination?.total_pages || 1} (Total records:{" "}
-                  {dashboardData?.pagination?.total_records || 0})
+                  Showing {paginatedRecords.length > 0 ? startIndex + 1 : 0} to{" "}
+                  {Math.min(endIndex, totalFilteredRecords)} of{" "}
+                  {totalFilteredRecords} filtered records
+                  {totalFilteredRecords !== callRecords.length && (
+                    <span style={{ color: "#999" }}>
+                      {" "}
+                      (out of {callRecords.length} total)
+                    </span>
+                  )}
                 </div>
                 <div
                   style={{
@@ -2700,8 +2729,6 @@ const MedicareDashboard = () => {
 
                   <div style={{ display: "flex", gap: "4px" }}>
                     {(() => {
-                      const totalPages =
-                        dashboardData?.pagination?.total_pages || 1;
                       const pages = [];
                       const maxPagesToShow = 5;
 
@@ -2744,12 +2771,7 @@ const MedicareDashboard = () => {
 
                   <button
                     onClick={() =>
-                      setCurrentPage((prev) =>
-                        Math.min(
-                          dashboardData?.pagination?.total_pages || 1,
-                          prev + 1
-                        )
-                      )
+                      setCurrentPage((prev) => Math.min(totalPages, prev + 1))
                     }
                     style={{
                       display: "inline-flex",
@@ -2763,20 +2785,10 @@ const MedicareDashboard = () => {
                       fontSize: "13px",
                       fontWeight: 500,
                       cursor:
-                        currentPage ===
-                        (dashboardData?.pagination?.total_pages || 1)
-                          ? "not-allowed"
-                          : "pointer",
-                      opacity:
-                        currentPage ===
-                        (dashboardData?.pagination?.total_pages || 1)
-                          ? 0.5
-                          : 1,
+                        currentPage === totalPages ? "not-allowed" : "pointer",
+                      opacity: currentPage === totalPages ? 0.5 : 1,
                     }}
-                    disabled={
-                      currentPage ===
-                      (dashboardData?.pagination?.total_pages || 1)
-                    }
+                    disabled={currentPage === totalPages}
                   >
                     Next
                     <i className="bi bi-chevron-right"></i>
@@ -2786,13 +2798,10 @@ const MedicareDashboard = () => {
             </div>
           </>
         )}
-      {/* Data Export View */}
-        {currentView === "data-export" && (
-          <DataExport />
-        )}
-      </div> {/* closing container div */}
-      
-
+        {/* Data Export View */}
+        {currentView === "data-export" && <DataExport />}
+      </div>{" "}
+      {/* closing container div */}
       {/* Transcript Modal */}
       {showTranscriptModal && selectedCallRecord && (
         <div
@@ -3085,7 +3094,6 @@ const MedicareDashboard = () => {
           </div>
         </div>
       )}
-
       {/* Mobile Responsive Styles */}
       <style>{`
         /* Base responsive settings */
@@ -3225,7 +3233,6 @@ const MedicareDashboard = () => {
           }
         }
       `}</style>
-
       <link
         rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
