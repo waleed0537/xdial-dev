@@ -6,7 +6,7 @@ import Login from './login';
 import ClientLanding from './ClientLanding';
 import ClientRecordings from './Clientrecordings';
 import DataExport from './DataExport';
-
+import IntegrationForm from './IntegrationForm';
 function App() {
   return (
     <Router>
@@ -16,6 +16,7 @@ function App() {
         <Route path="/client-landing" element={<ClientLanding />} />
         <Route path="/recordings" element={<ClientRecordings />} />
         <Route path="/data-export" element={<DataExport />} />
+        <Route path="/integration-form" element={<IntegrationForm />} />
       </Routes>
     </Router>
   );

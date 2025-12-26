@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from "react";
 import Chart from "chart.js/auto";
 import api from "./api";
 import DataExport from "./DataExport";
+const getUserRole = () => {
+  return localStorage.getItem("role") || sessionStorage.getItem("role");
+};
 const MedicareDashboard = () => {
   const [currentView, setCurrentView] = useState("dashboard");
   const [showSummaryGraph, setShowSummaryGraph] = useState(false);
@@ -42,6 +45,11 @@ const MedicareDashboard = () => {
       window.location.href = "/client-landing";
     }
   }, []); // Only run once on mount
+  useEffect(() => {
+  if (currentView === "data-export" && getUserRole() === "client_member") {
+    setCurrentView("dashboard"); // Redirect to dashboard if they try to access
+  }
+}, [currentView]);
   const parseTimestamp = (timestamp) => {
     try {
       if (!timestamp) return null;
@@ -132,8 +140,7 @@ const MedicareDashboard = () => {
       setLoading(true);
       setError(null);
       try {
-        const token =
-          localStorage.getItem("access_token");
+        const token = localStorage.getItem("access_token");
 
         if (!token) {
           throw new Error("No authentication token found. Please login again.");
@@ -141,19 +148,17 @@ const MedicareDashboard = () => {
 
         // First, fetch the first page to get total pages info
         let apiUrl = `https://api.xlitecore.xdialnetworks.com/api/v1/campaigns/${campaignId}/dashboard?start_date=${startDate}`;
-if (endDate && endDate !== startDate) {
-  apiUrl += `&end_date=${endDate}`;
-}
-apiUrl += `&page=1&page_size=25`;
+        if (endDate && endDate !== startDate) {
+          apiUrl += `&end_date=${endDate}`;
+        }
+        apiUrl += `&page=1&page_size=25`;
 
-const firstPageRes = await fetch(apiUrl,
-          {
-            headers: {
-              accept: "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
+        const firstPageRes = await fetch(apiUrl, {
+          headers: {
+            accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
 
         if (firstPageRes.status === 401) {
           throw new Error("Session expired. Please login again.");
@@ -174,21 +179,19 @@ const firstPageRes = await fetch(apiUrl,
         // Fetch all remaining pages in parallel
         const pagePromises = [];
         for (let page = 2; page <= totalPages; page++) {
-  let pageUrl = `https://api.xlitecore.xdialnetworks.com/api/v1/campaigns/${campaignId}/dashboard?start_date=${startDate}`;
-  if (endDate && endDate !== startDate) {
-    pageUrl += `&end_date=${endDate}`;
-  }
-  pageUrl += `&page=${page}&page_size=25`;
-  
-  pagePromises.push(
-    fetch(pageUrl,
-              {
-                headers: {
-                  accept: "application/json",
-                  Authorization: `Bearer ${token}`,
-                },
-              }
-            ).then((res) => res.json())
+          let pageUrl = `https://api.xlitecore.xdialnetworks.com/api/v1/campaigns/${campaignId}/dashboard?start_date=${startDate}`;
+          if (endDate && endDate !== startDate) {
+            pageUrl += `&end_date=${endDate}`;
+          }
+          pageUrl += `&page=${page}&page_size=25`;
+
+          pagePromises.push(
+            fetch(pageUrl, {
+              headers: {
+                accept: "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+            }).then((res) => res.json())
           );
         }
 
@@ -230,7 +233,7 @@ const firstPageRes = await fetch(apiUrl,
     if (fetchTrigger > 0) {
       fetchData();
     }
-}, [campaignId, fetchTrigger, endDate]);
+  }, [campaignId, fetchTrigger, endDate]);
   // Reset to page 1 when filters change
 
   const summaryChartRef = useRef(null);
@@ -1139,11 +1142,11 @@ const firstPageRes = await fetch(apiUrl,
 
       // Apply end date/time filter
       if (endDate && endDate !== startDate) {
-  const endDateTime = parseUserInputDate(endDate, endTime || "23:59:59");
-  if (endDateTime && recordDate > endDateTime) {
-    return false;
-  }
-}
+        const endDateTime = parseUserInputDate(endDate, endTime || "23:59:59");
+        if (endDateTime && recordDate > endDateTime) {
+          return false;
+        }
+      }
 
       return true;
     });
@@ -1556,15 +1559,18 @@ const firstPageRes = await fetch(apiUrl,
           >
             <i className="bi bi-mic-fill"></i> Recordings
           </button>
-          <button
-            style={{
-              ...styles.btn,
-              ...(currentView === "data-export" ? styles.btnPrimary : {}),
-            }}
-            onClick={() => setCurrentView("data-export")}
-          >
-            <i className="bi bi-download"></i> Data Export
-          </button>
+
+          {getUserRole() !== "client_member" && (
+            <button
+              style={{
+                ...styles.btn,
+                ...(currentView === "data-export" ? styles.btnPrimary : {}),
+              }}
+              onClick={() => setCurrentView("data-export")}
+            >
+              <i className="bi bi-download"></i> Data Export
+            </button>
+          )}
           <button
             style={styles.btn}
             onClick={() => {
@@ -1572,7 +1578,7 @@ const firstPageRes = await fetch(apiUrl,
               localStorage.removeItem("user_id");
               localStorage.removeItem("username");
               localStorage.removeItem("role");
-           
+
               window.location.href = "/";
             }}
           >
@@ -1662,10 +1668,8 @@ const firstPageRes = await fetch(apiUrl,
                   />
                 </div>
               </div>
+            </div>
 
-           
-              </div>
-       
             {/* Statistics Content */}
             <div
               className="statistics-grid"
@@ -1689,34 +1693,37 @@ const firstPageRes = await fetch(apiUrl,
                     Calls Over Time
                   </div>
                   <div style={{ fontSize: "13px", color: "#777" }}>
-  {(() => {
-    // Check if different dates are selected (and end date is actually set)
-    const showDateView =
-      startDate && endDate && startDate !== endDate;
+                    {(() => {
+                      // Check if different dates are selected (and end date is actually set)
+                      const showDateView =
+                        startDate && endDate && startDate !== endDate;
 
-    if (showDateView) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      const daysDiff =
-        Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-      return `Daily breakdown across ${daysDiff} days (${start.toLocaleDateString(
-        "en-US",
-        { month: "short", day: "numeric" }
-      )} - ${end.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      })})`;
-    }
-    
-    // If only start date is selected (no end date or end date equals start date)
-    if (startDate && (!endDate || startDate === endDate)) {
-      const singleDate = new Date(startDate);
-      return `Hourly breakdown for ${singleDate.toLocaleDateString("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      })}`;
-    }
+                      if (showDateView) {
+                        const start = new Date(startDate);
+                        const end = new Date(endDate);
+                        const daysDiff =
+                          Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                        return `Daily breakdown across ${daysDiff} days (${start.toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric" }
+                        )} - ${end.toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        })})`;
+                      }
+
+                      // If only start date is selected (no end date or end date equals start date)
+                      if (startDate && (!endDate || startDate === endDate)) {
+                        const singleDate = new Date(startDate);
+                        return `Hourly breakdown for ${singleDate.toLocaleDateString(
+                          "en-US",
+                          {
+                            month: "long",
+                            day: "numeric",
+                            year: "numeric",
+                          }
+                        )}`;
+                      }
                       // Filter records by selected date/time
                       const filteredTimestamps = callRecords
                         .filter((r) => {
